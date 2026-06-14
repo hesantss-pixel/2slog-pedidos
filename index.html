@@ -442,13 +442,13 @@ const firebaseConfig = {
   appId: "1:551825837735:web:35b90c1fbdff468f8dd582"
 };
 
-const SENHA = "2slog2026";
+const SENHA = "2sl2024";
 
 const app = initializeApp(firebaseConfig);
 const db = getDatabase(app);
 const dbRef = ref(db, 'pedidos');
 
-const LETRAS = ['A','B','C','D','E','F','G','H','I','J','K','L','M'];
+const LETRAS = ['A','B','C','D','E','F','G','H','I','J','K','L','M','N'];
 let dadosLocais = {};
 let ruaAtual = 'A', numAtual = 1, scanCnt = 0;
 let searchNF = null, bulkFoundNFs = [];
@@ -548,27 +548,35 @@ async function limparTudo(){
 function refreshUI(){
   const entries = Object.entries(dadosLocais);
   const n = entries.length;
-  const ruas = new Set(entries.map(([,p]) => p.loc)).size;
+  // count unique ruas across all locs arrays
+  const ruasSet = new Set();
+  entries.forEach(([,p]) => { (p.locs||[p.loc]).forEach(l => ruasSet.add(l)); });
   document.getElementById('hdr-count').textContent = n;
   document.getElementById('st-total').textContent = n;
-  document.getElementById('st-ruas').textContent = ruas;
+  document.getElementById('st-ruas').textContent = ruasSet.size;
   document.getElementById('lista-badge').textContent = n;
   renderLista(entries);
-  // atualiza busca se tiver aberta
   const nfBusca = document.getElementById('home-search').value.trim();
   if(nfBusca) buscarHome();
 }
 
 function renderLista(entries){
   if(!entries) entries = Object.entries(dadosLocais);
-  const sorted = [...entries].sort((a,b) => a[1].loc.localeCompare(b[1].loc));
+  const sorted = [...entries].sort((a,b) => {
+    const aLoc = (a[1].locs||[a[1].loc])[0]||'';
+    const bLoc = (b[1].locs||[b[1].loc])[0]||'';
+    return aLoc.localeCompare(bLoc);
+  });
   const el = document.getElementById('lista-scroll');
   if(!sorted.length){ el.innerHTML = '<div class="lista-empty">Nenhum pedido registrado</div>'; return; }
   const frag = document.createDocumentFragment();
   sorted.forEach(([nf, p]) => {
+    const locs = p.locs || [p.loc];
+    const ruasHtml = locs.map(l => `<span class="li-rua-tag">${l}</span>`).join(' ');
     const div = document.createElement('div');
     div.className = 'lista-item';
-    div.innerHTML = `<span class="li-rua-tag">${p.loc}</span><span class="li-nf">${nf}</span><span class="li-time">${p.ts}</span><button class="li-del-btn" onclick="delItem('${nf}')">✕</button>`;
+    div.style.flexWrap = 'wrap';
+    div.innerHTML = `<div style="display:flex;gap:4px;flex-wrap:wrap;flex-shrink:0;">${ruasHtml}</div><span class="li-nf">${nf}</span><span class="li-time">${p.ts}</span><button class="li-del-btn" onclick="delItem('${nf}')">✕</button>`;
     frag.appendChild(div);
   });
   el.innerHTML = ''; el.appendChild(frag);
@@ -610,8 +618,9 @@ function buscarHome(){
   const p = dadosLocais[nf];
   if(p){
     searchNF = nf;
+    const locs = p.locs || [p.loc];
     document.getElementById('sr-nf').textContent = nf;
-    document.getElementById('sr-rua').textContent = `RUA ${p.loc}`;
+    document.getElementById('sr-rua').textContent = locs.map(l => `RUA ${l}`).join('  ·  ');
     document.getElementById('sr-meta').textContent = p.ts;
     elFound.style.display = 'block';
   } else { elNot.style.display = 'block'; }
@@ -646,10 +655,20 @@ async function registrarRapido(){
   const nf = document.getElementById('qa-nf').value.trim().toUpperCase();
   const rua = document.getElementById('qa-rua').value;
   const num = document.getElementById('qa-num').value;
+  const loc = `${rua}-${num}`;
   if(!nf){ toast('Digite a nota fiscal','warn'); return; }
-  if(dadosLocais[nf]){ toast(`NF ${nf} já registrada em ${dadosLocais[nf].loc}`,'warn'); return; }
-  await salvarPedido(nf, { loc: `${rua}-${num}`, ts: agora() });
-  toast(`✔ NF ${nf} → Rua ${rua}-${num}`);
+  if(dadosLocais[nf]){
+    // NF já existe — adiciona nova rua se não tiver
+    const p = dadosLocais[nf];
+    const locs = p.locs || [p.loc];
+    if(locs.includes(loc)){ toast(`NF ${nf} já está na Rua ${loc}`,'warn'); return; }
+    locs.push(loc);
+    await salvarPedido(nf, { locs, ts: p.ts });
+    toast(`✔ NF ${nf} → Rua ${loc} adicionada`);
+  } else {
+    await salvarPedido(nf, { locs: [loc], ts: agora() });
+    toast(`✔ NF ${nf} → Rua ${loc}`);
+  }
   document.getElementById('qa-nf').value = '';
   document.getElementById('qa-nf').focus();
 }
@@ -679,7 +698,9 @@ function buscarLote(){
     const div = document.createElement('div');
     if(r.data){
       div.className = 'bulk-item found'; div.id = `bi-${r.nf}`;
-      div.innerHTML = `<span class="bulk-status">📦</span><span class="bulk-nf">${r.nf}</span><span class="bulk-rua">RUA ${r.data.loc}</span><button class="bulk-del" onclick="delBulkItem('${r.nf}')">✕</button>`;
+      const bLocs = r.data.locs || [r.data.loc];
+      const bRuasHtml = bLocs.map(l => `<span class="bulk-rua">RUA ${l}</span>`).join(' ');
+      div.innerHTML = `<span class="bulk-status">📦</span><span class="bulk-nf">${r.nf}</span><div style="display:flex;gap:4px;flex-wrap:wrap;">${bRuasHtml}</div><button class="bulk-del" onclick="delBulkItem('${r.nf}')">✕</button>`;
     } else {
       div.className = 'bulk-item notfound';
       div.innerHTML = `<span class="bulk-status">❌</span><span class="bulk-nf">${r.nf}</span><span class="bulk-notfound-txt">Não registrado</span>`;
@@ -784,12 +805,27 @@ scanInp.addEventListener('keydown', e => { if(e.key === 'Enter'){ const v = scan
 async function registrar(nf){
   nf = nf.toUpperCase();
   const loc = `${ruaAtual}-${numAtual}`;
-  if(dadosLocais[nf]){ flash('err'); toast(`⚠ NF ${nf} já está em ${dadosLocais[nf].loc}`,'warn'); scanInp.value = ''; return; }
   const ts = agora();
-  await salvarPedido(nf, { loc, ts });
-  flash('ok');
-  document.getElementById('last-nf-disp').textContent = nf;
-  document.getElementById('last-rua-disp').textContent = `Rua ${loc} · ${ts}`;
+  if(dadosLocais[nf]){
+    // já existe — adiciona rua se for nova
+    const p = dadosLocais[nf];
+    const locs = p.locs || [p.loc];
+    if(locs.includes(loc)){
+      flash('err');
+      toast(`⚠ NF ${nf} já está na Rua ${loc}`,'warn');
+      scanInp.value = ''; return;
+    }
+    locs.push(loc);
+    await salvarPedido(nf, { locs, ts: p.ts });
+    flash('ok');
+    document.getElementById('last-nf-disp').textContent = nf;
+    document.getElementById('last-rua-disp').textContent = `Rua ${loc} adicionada · ${ts}`;
+  } else {
+    await salvarPedido(nf, { locs: [loc], ts });
+    flash('ok');
+    document.getElementById('last-nf-disp').textContent = nf;
+    document.getElementById('last-rua-disp').textContent = `Rua ${loc} · ${ts}`;
+  }
   document.getElementById('last-row').classList.remove('show');
   void document.getElementById('last-row').offsetWidth;
   document.getElementById('last-row').classList.add('show');
@@ -808,9 +844,20 @@ function flash(type){
 function addLog(nf, loc, ts){
   const list = document.getElementById('log-list');
   list.querySelectorAll('.log-empty-msg').forEach(e => e.remove());
+  // update existing log entry if NF already there
+  const existing = document.getElementById(`log-${nf}`);
+  if(existing){
+    const tagsWrap = existing.querySelector('.log-tags');
+    if(tagsWrap){
+      const tag = document.createElement('span');
+      tag.className = 'log-rua-tag'; tag.textContent = loc;
+      tagsWrap.appendChild(tag);
+    }
+    return;
+  }
   const div = document.createElement('div');
   div.className = 'log-entry'; div.id = `log-${nf}`;
-  div.innerHTML = `<span class="log-rua-tag">${loc}</span><span class="log-nf">${nf}</span><span class="log-time">${ts}</span><button class="log-x" onclick="delLog('${nf}')">✕</button>`;
+  div.innerHTML = `<div class="log-tags" style="display:flex;gap:4px;flex-wrap:wrap;flex-shrink:0;"><span class="log-rua-tag">${loc}</span></div><span class="log-nf">${nf}</span><span class="log-time">${ts}</span><button class="log-x" onclick="delLog('${nf}')">✕</button>`;
   list.insertBefore(div, list.firstChild);
 }
 
@@ -824,11 +871,47 @@ function delLog(nf){
 }
 window.delLog = delLog;
 
+
+/* ── SOM ── */
+function tocarSom(){
+  try{
+    const ctx=new(window.AudioContext||window.webkitAudioContext)();
+    const osc=ctx.createOscillator();
+    const gain=ctx.createGain();
+    osc.connect(gain);gain.connect(ctx.destination);
+    osc.type='sine';
+    osc.frequency.setValueAtTime(880,ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(1200,ctx.currentTime+0.08);
+    gain.gain.setValueAtTime(0.3,ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001,ctx.currentTime+0.18);
+    osc.start(ctx.currentTime);osc.stop(ctx.currentTime+0.18);
+  }catch(e){}
+}
+
 function proximaRua(){
   numAtual++;
   if(numAtual > 42){ const idx = LETRAS.indexOf(ruaAtual); if(idx < LETRAS.length-1){ ruaAtual = LETRAS[idx+1]; numAtual = 1; } else { toast('Última rua!','warn'); return; } }
-  atualizarLocScan(); toast(`📍 Rua ${ruaAtual}-${numAtual}`); scanInp.focus();
+  atualizarLocScan(); tocarSom(); toast(`📍 Rua ${ruaAtual}-${numAtual}`); scanInp.focus();
 }
+
+/* ── SOM ── */
+function tocarSom(){
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(880, ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(1200, ctx.currentTime + 0.08);
+    gain.gain.setValueAtTime(0.3, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.18);
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 0.18);
+  } catch(e){}
+}
+
 window.proximaRua = proximaRua;
 
 function abrirTrocaRua(){
@@ -844,11 +927,11 @@ window.closeTroca = closeTroca;
 function confirmarTroca(){
   ruaAtual = document.getElementById('troca-rua').value;
   numAtual = parseInt(document.getElementById('troca-num').value);
-  atualizarLocScan(); closeTroca(); toast(`📍 Rua ${ruaAtual}-${numAtual}`); scanInp.focus();
+  atualizarLocScan(); tocarSom(); closeTroca(); toast(`📍 Rua ${ruaAtual}-${numAtual}`); scanInp.focus();
 }
 window.confirmarTroca = confirmarTroca;
 
 document.getElementById('overlay-troca').onclick = e => { if(e.target === document.getElementById('overlay-troca')) closeTroca(); };
 </script>
 </body>
-</html>
+                                                                     </html>
