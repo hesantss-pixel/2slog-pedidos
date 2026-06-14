@@ -430,7 +430,10 @@ textarea{resize:none;line-height:1.7;font-size:14px;}
 <!-- FIREBASE -->
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getDatabase, ref, set, remove, onValue, get } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+import { getDatabase, ref, set, remove, onValue } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+
+// ── FIX 1: Senha atualizada ──
+const SENHA = "2slog2026";
 
 const firebaseConfig = {
   apiKey: "AIzaSyB5r3CJSf0N_bepvFDkyYVPZ9oC3tPt2w8",
@@ -441,8 +444,6 @@ const firebaseConfig = {
   messagingSenderId: "551825837735",
   appId: "1:551825837735:web:35b90c1fbdff468f8dd582"
 };
-
-const SENHA = "2slog2026";
 
 const app = initializeApp(firebaseConfig);
 const db = getDatabase(app);
@@ -522,7 +523,7 @@ function conectarFirebase(){
     dadosLocais = snapshot.val() || {};
     document.getElementById('loading').classList.remove('show');
     refreshUI();
-  }, (err) => {
+  }, () => {
     document.getElementById('loading').classList.remove('show');
     toast('Erro de conexão','err');
   });
@@ -548,9 +549,8 @@ async function limparTudo(){
 function refreshUI(){
   const entries = Object.entries(dadosLocais);
   const n = entries.length;
-  // count unique ruas across all locs arrays
   const ruasSet = new Set();
-  entries.forEach(([,p]) => { (p.locs||[p.loc]).forEach(l => ruasSet.add(l)); });
+  entries.forEach(([,p]) => { (p.locs || [p.loc]).forEach(l => { if(l) ruasSet.add(l); }); });
   document.getElementById('hdr-count').textContent = n;
   document.getElementById('st-total').textContent = n;
   document.getElementById('st-ruas').textContent = ruasSet.size;
@@ -563,20 +563,21 @@ function refreshUI(){
 function renderLista(entries){
   if(!entries) entries = Object.entries(dadosLocais);
   const sorted = [...entries].sort((a,b) => {
-    const aLoc = (a[1].locs||[a[1].loc])[0]||'';
-    const bLoc = (b[1].locs||[b[1].loc])[0]||'';
+    const aLoc = (a[1].locs || [a[1].loc])[0] || '';
+    const bLoc = (b[1].locs || [b[1].loc])[0] || '';
     return aLoc.localeCompare(bLoc);
   });
   const el = document.getElementById('lista-scroll');
   if(!sorted.length){ el.innerHTML = '<div class="lista-empty">Nenhum pedido registrado</div>'; return; }
   const frag = document.createDocumentFragment();
   sorted.forEach(([nf, p]) => {
-    const locs = p.locs || [p.loc];
+    // FIX 2: suporte a ambos os formatos locs[] e loc
+    const locs = p.locs || (p.loc ? [p.loc] : ['?']);
     const ruasHtml = locs.map(l => `<span class="li-rua-tag">${l}</span>`).join(' ');
     const div = document.createElement('div');
     div.className = 'lista-item';
     div.style.flexWrap = 'wrap';
-    div.innerHTML = `<div style="display:flex;gap:4px;flex-wrap:wrap;flex-shrink:0;">${ruasHtml}</div><span class="li-nf">${nf}</span><span class="li-time">${p.ts}</span><button class="li-del-btn" onclick="delItem('${nf}')">✕</button>`;
+    div.innerHTML = `<div style="display:flex;gap:4px;flex-wrap:wrap;flex-shrink:0;">${ruasHtml}</div><span class="li-nf">${nf}</span><span class="li-time">${p.ts || ''}</span><button class="li-del-btn" onclick="delItem('${nf}')">✕</button>`;
     frag.appendChild(div);
   });
   el.innerHTML = ''; el.appendChild(frag);
@@ -618,10 +619,11 @@ function buscarHome(){
   const p = dadosLocais[nf];
   if(p){
     searchNF = nf;
-    const locs = p.locs || [p.loc];
+    // FIX 2: suporte a ambos os formatos
+    const locs = p.locs || (p.loc ? [p.loc] : ['?']);
     document.getElementById('sr-nf').textContent = nf;
     document.getElementById('sr-rua').textContent = locs.map(l => `RUA ${l}`).join('  ·  ');
-    document.getElementById('sr-meta').textContent = p.ts;
+    document.getElementById('sr-meta').textContent = p.ts || '';
     elFound.style.display = 'block';
   } else { elNot.style.display = 'block'; }
 }
@@ -658,9 +660,8 @@ async function registrarRapido(){
   const loc = `${rua}-${num}`;
   if(!nf){ toast('Digite a nota fiscal','warn'); return; }
   if(dadosLocais[nf]){
-    // NF já existe — adiciona nova rua se não tiver
     const p = dadosLocais[nf];
-    const locs = p.locs || [p.loc];
+    const locs = p.locs || (p.loc ? [p.loc] : []);
     if(locs.includes(loc)){ toast(`NF ${nf} já está na Rua ${loc}`,'warn'); return; }
     locs.push(loc);
     await salvarPedido(nf, { locs, ts: p.ts });
@@ -677,8 +678,9 @@ window.registrarRapido = registrarRapido;
 /* ── BULK ── */
 function buscarLote(){
   const raw = document.getElementById('bulk-input').value;
-  const nfs = [...new Set(raw.split(/[\n,;\s\t]+/).map(s => s.trim().toUpperCase()).filter(s => s.length >= 4))];
-  if(!nfs.length){ toast('Digite ao menos uma NF','warn'); return; }
+  // FIX 3: validação mais rigorosa — aceita apenas sequências numéricas com 4-6 dígitos
+  const nfs = [...new Set(raw.split(/[\n,;\s\t]+/).map(s => s.trim().toUpperCase()).filter(s => /^\d{4,6}$/.test(s)))];
+  if(!nfs.length){ toast('Digite ao menos uma NF válida (4 a 6 dígitos)','warn'); return; }
 
   const found = [], notFound = [];
   nfs.forEach(nf => { if(dadosLocais[nf]) found.push({nf, data: dadosLocais[nf]}); else notFound.push({nf}); });
@@ -698,7 +700,8 @@ function buscarLote(){
     const div = document.createElement('div');
     if(r.data){
       div.className = 'bulk-item found'; div.id = `bi-${r.nf}`;
-      const bLocs = r.data.locs || [r.data.loc];
+      // FIX 2: suporte a ambos os formatos
+      const bLocs = r.data.locs || (r.data.loc ? [r.data.loc] : ['?']);
       const bRuasHtml = bLocs.map(l => `<span class="bulk-rua">RUA ${l}</span>`).join(' ');
       div.innerHTML = `<span class="bulk-status">📦</span><span class="bulk-nf">${r.nf}</span><div style="display:flex;gap:4px;flex-wrap:wrap;">${bRuasHtml}</div><button class="bulk-del" onclick="delBulkItem('${r.nf}')">✕</button>`;
     } else {
@@ -751,11 +754,19 @@ window.removerTodos = removerTodos;
 function exportar(){
   const entries = Object.entries(dadosLocais);
   if(!entries.length){ toast('Nada para exportar','warn'); return; }
-  const sorted = entries.sort((a,b) => a[1].loc.localeCompare(b[1].loc));
+  // FIX 2: usa locs[] com fallback para loc
+  const sorted = entries.sort((a,b) => {
+    const aLoc = (a[1].locs || [a[1].loc])[0] || '';
+    const bLoc = (b[1].locs || [b[1].loc])[0] || '';
+    return aLoc.localeCompare(bLoc);
+  });
   let txt = '2SL LOG — Relatório de Pedidos\n';
   txt += `Gerado: ${new Date().toLocaleString('pt-BR')}\n`;
   txt += '─'.repeat(40) + '\n\n';
-  sorted.forEach(([nf, p]) => { txt += `NF: ${nf}  |  Rua: ${p.loc}  |  ${p.ts}\n`; });
+  sorted.forEach(([nf, p]) => {
+    const locs = p.locs || (p.loc ? [p.loc] : ['?']);
+    txt += `NF: ${nf}  |  Rua(s): ${locs.join(', ')}  |  ${p.ts || ''}\n`;
+  });
   txt += `\nTotal: ${entries.length} pedidos`;
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([txt], {type:'text/plain'}));
@@ -799,17 +810,29 @@ window.voltarHome = voltarHome;
 function atualizarLocScan(){ document.getElementById('scan-rua-txt').textContent = `RUA ${ruaAtual}-${numAtual}`; }
 
 const scanInp = document.getElementById('scan-inp');
-scanInp.addEventListener('input', () => { const v = scanInp.value.trim(); if(/^\d{6}$/.test(v)) registrar(v); });
-scanInp.addEventListener('keydown', e => { if(e.key === 'Enter'){ const v = scanInp.value.trim(); if(v.length >= 4) registrar(v); }});
+
+// FIX 3: aceita apenas dígitos no campo scan
+scanInp.addEventListener('input', () => {
+  scanInp.value = scanInp.value.replace(/\D/g, '');
+  const v = scanInp.value.trim();
+  if(/^\d{6}$/.test(v)) registrar(v);
+});
+scanInp.addEventListener('keydown', e => {
+  if(e.key === 'Enter'){
+    const v = scanInp.value.trim();
+    // FIX 3: só confirma se for numérico com 4+ dígitos
+    if(/^\d{4,6}$/.test(v)) registrar(v);
+    else if(v.length > 0) toast('NF inválida — use apenas números (4 a 6 dígitos)','warn');
+  }
+});
 
 async function registrar(nf){
   nf = nf.toUpperCase();
   const loc = `${ruaAtual}-${numAtual}`;
   const ts = agora();
   if(dadosLocais[nf]){
-    // já existe — adiciona rua se for nova
     const p = dadosLocais[nf];
-    const locs = p.locs || [p.loc];
+    const locs = p.locs || (p.loc ? [p.loc] : []);
     if(locs.includes(loc)){
       flash('err');
       toast(`⚠ NF ${nf} já está na Rua ${loc}`,'warn');
@@ -844,7 +867,6 @@ function flash(type){
 function addLog(nf, loc, ts){
   const list = document.getElementById('log-list');
   list.querySelectorAll('.log-empty-msg').forEach(e => e.remove());
-  // update existing log entry if NF already there
   const existing = document.getElementById(`log-${nf}`);
   if(existing){
     const tagsWrap = existing.querySelector('.log-tags');
@@ -871,47 +893,31 @@ function delLog(nf){
 }
 window.delLog = delLog;
 
-
-/* ── SOM ── */
+/* ── SOM ── FIX 4: função única, sem duplicação */
 function tocarSom(){
   try{
-    const ctx=new(window.AudioContext||window.webkitAudioContext)();
-    const osc=ctx.createOscillator();
-    const gain=ctx.createGain();
-    osc.connect(gain);gain.connect(ctx.destination);
-    osc.type='sine';
-    osc.frequency.setValueAtTime(880,ctx.currentTime);
-    osc.frequency.exponentialRampToValueAtTime(1200,ctx.currentTime+0.08);
-    gain.gain.setValueAtTime(0.3,ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001,ctx.currentTime+0.18);
-    osc.start(ctx.currentTime);osc.stop(ctx.currentTime+0.18);
-  }catch(e){}
-}
-
-function proximaRua(){
-  numAtual++;
-  if(numAtual > 42){ const idx = LETRAS.indexOf(ruaAtual); if(idx < LETRAS.length-1){ ruaAtual = LETRAS[idx+1]; numAtual = 1; } else { toast('Última rua!','warn'); return; } }
-  atualizarLocScan(); tocarSom(); toast(`📍 Rua ${ruaAtual}-${numAtual}`); scanInp.focus();
-}
-
-/* ── SOM ── */
-function tocarSom(){
-  try {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
-    osc.connect(gain);
-    gain.connect(ctx.destination);
+    osc.connect(gain); gain.connect(ctx.destination);
     osc.type = 'sine';
     osc.frequency.setValueAtTime(880, ctx.currentTime);
     osc.frequency.exponentialRampToValueAtTime(1200, ctx.currentTime + 0.08);
     gain.gain.setValueAtTime(0.3, ctx.currentTime);
     gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.18);
-    osc.start(ctx.currentTime);
-    osc.stop(ctx.currentTime + 0.18);
+    osc.start(ctx.currentTime); osc.stop(ctx.currentTime + 0.18);
   } catch(e){}
 }
 
+function proximaRua(){
+  numAtual++;
+  if(numAtual > 42){
+    const idx = LETRAS.indexOf(ruaAtual);
+    if(idx < LETRAS.length - 1){ ruaAtual = LETRAS[idx+1]; numAtual = 1; }
+    else { toast('Última rua!','warn'); return; }
+  }
+  atualizarLocScan(); tocarSom(); toast(`📍 Rua ${ruaAtual}-${numAtual}`); scanInp.focus();
+}
 window.proximaRua = proximaRua;
 
 function abrirTrocaRua(){
@@ -934,4 +940,4 @@ window.confirmarTroca = confirmarTroca;
 document.getElementById('overlay-troca').onclick = e => { if(e.target === document.getElementById('overlay-troca')) closeTroca(); };
 </script>
 </body>
-  </html>
+</html>
